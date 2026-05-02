@@ -211,7 +211,7 @@ app.use('/api', api);
 const PORT = process.env.PORT || 3456;
 
 app.listen(PORT, () => {
-  console.log(`\n  cli-bridge running on http://localhost:${PORT}`);
+  console.log(`\n  local-ai running on http://localhost:${PORT}`);
   console.log(`  Providers: ${Object.keys(CLI_TOOLS).join(', ')}`);
   console.log(`  Health: http://localhost:${PORT}/health\n`);
 });

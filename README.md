@@ -1,9 +1,9 @@
-# cli-bridge
+# local-ai
 
 ![AI Generated](https://ai-percentage-pin.vercel.app/api/ai-percentage?value=85)
 ![AI PRs Welcome](https://ai-percentage-pin.vercel.app/api/ai-prs?welcome=yes)
 
-Lightweight HTTP-to-CLI bridge for AI tools. Spawns local CLI processes (Claude Code, Codex, Gemini CLI) and streams responses back via SSE. No API keys needed — uses your already-authenticated CLI tools.
+Lightweight local AI server for AI tools. Spawns local CLI processes (Claude Code, Codex, Gemini CLI) and streams responses back via SSE. No API keys needed — uses your already-authenticated CLI tools.
 
 ## Quick Start
 
@@ -81,7 +81,7 @@ myTool: {
 ## Use as Git Submodule
 
 ```bash
-git submodule add https://github.com/sarthakagrawal927/cli-bridge.git server
+git submodule add https://github.com/sarthakagrawal927/local-ai.git server
 cd server && npm install
 ```
 
