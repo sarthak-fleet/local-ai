@@ -70,9 +70,96 @@ const CLI_TOOLS = {
 // ── Routes ────────────────────────────────────────────────────────
 
 const api = Router();
+const localStore = {
+  progress: new Map(),
+  notes: new Map(),
+  chats: new Map(),
+};
+
+function localUserId(_req) {
+  return 'local-dev-user';
+}
+
+function scopedKey(req, problemId) {
+  return `${localUserId(req)}:${problemId}`;
+}
 
 api.get('/health', (_req, res) => {
   res.json({ status: 'ok', providers: Object.keys(CLI_TOOLS) });
+});
+
+api.get('/auth/verify', (_req, res) => {
+  res.status(401).json({ error: 'Unauthorized' });
+});
+
+api.post('/auth/logout', (_req, res) => {
+  res.json({ success: true });
+});
+
+api.get('/progress', (req, res) => {
+  const prefix = `${localUserId(req)}:`;
+  const progress = {};
+  for (const [key, value] of localStore.progress.entries()) {
+    if (key.startsWith(prefix)) progress[key.slice(prefix.length)] = value;
+  }
+  res.json({ progress });
+});
+
+api.put('/progress', (req, res) => {
+  const { problemId, data } = req.body ?? {};
+  if (!problemId || !data) {
+    return res.status(400).json({ error: 'problemId and data required' });
+  }
+  localStore.progress.set(scopedKey(req, problemId), {
+    status: data.status || 'unseen',
+    code: data.code || undefined,
+    language: data.language || 'typescript',
+    bookmarked: Boolean(data.bookmarked),
+    lastAttempted: data.lastAttempted || undefined,
+    ease: data.ease ?? 2.5,
+    interval: data.interval ?? 0,
+    repetitions: data.repetitions ?? 0,
+    nextReview: data.nextReview || undefined,
+    lastReview: data.lastReview || undefined,
+  });
+  res.json({ success: true });
+});
+
+api.get('/notes', (req, res) => {
+  const problemId = req.query.problemId;
+  if (!problemId) return res.status(400).json({ error: 'problemId required' });
+  res.json({ notes: localStore.notes.get(scopedKey(req, problemId)) ?? '' });
+});
+
+api.post('/notes', (req, res) => {
+  const { problemId, notes } = req.body ?? {};
+  if (!problemId || notes === undefined) {
+    return res.status(400).json({ error: 'problemId and notes required' });
+  }
+  localStore.notes.set(scopedKey(req, problemId), String(notes));
+  res.json({ success: true });
+});
+
+api.get('/chats', (req, res) => {
+  const problemId = req.query.problemId;
+  if (!problemId) return res.status(400).json({ error: 'problemId required' });
+  res.json({ messages: localStore.chats.get(scopedKey(req, problemId)) ?? [] });
+});
+
+api.post('/chats', (req, res) => {
+  const { problemId, messages } = req.body ?? {};
+  if (!problemId || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'problemId and messages required' });
+  }
+  localStore.chats.set(scopedKey(req, problemId), messages);
+  res.json({ success: true });
+});
+
+api.delete('/chats', (req, res) => {
+  const problemId = req.query.problemId;
+  if (!problemId) return res.status(400).json({ error: 'problemId required' });
+  localStore.chats.delete(scopedKey(req, problemId));
+  res.json({ success: true });
 });
 
 // POST /chat — { provider|tool, model?, messages, systemPrompt? }
