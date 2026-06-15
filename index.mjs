@@ -21,6 +21,7 @@ const CLI_TOOLS = {
     },
     inputMode: 'stdin',
     embedSystemPrompt: false,
+    supportsImages: false,
     parseStream: (line, emit) => {
       const json = JSON.parse(line);
       if (json.type === 'assistant' && json.message?.content) {
@@ -45,6 +46,11 @@ const CLI_TOOLS = {
     },
     inputMode: 'stdin',
     embedSystemPrompt: true,
+    supportsImages: true,
+    // For each image path, append: -i <path>
+    appendImageArgs: (args, imagePaths) => {
+      for (const p of imagePaths) args.push('-i', p);
+    },
     parseStream: (line, emit) => {
       const json = JSON.parse(line);
       if (json.type === 'item.completed' && json.item?.type === 'agent_message' && json.item.text) {
@@ -63,9 +69,30 @@ const CLI_TOOLS = {
     },
     inputMode: 'arg',
     embedSystemPrompt: true,
+    supportsImages: false,
     parseStream: null, // plain text mode — no JSON parsing
   },
 };
+
+// Normalize content to { text, imagePaths }. Accepts:
+//   - string  → { text: <string>, imagePaths: [] }
+//   - array of { type: 'text', text } | { type: 'image', image_path } parts
+function normalizeContent(content) {
+  if (typeof content === 'string') return { text: content, imagePaths: [] };
+  if (!Array.isArray(content)) return { text: String(content ?? ''), imagePaths: [] };
+
+  const textParts = [];
+  const imagePaths = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    if (part.type === 'text' && typeof part.text === 'string') {
+      textParts.push(part.text);
+    } else if (part.type === 'image' && typeof part.image_path === 'string') {
+      imagePaths.push(part.image_path);
+    }
+  }
+  return { text: textParts.join('\n'), imagePaths };
+}
 
 // ── Routes ────────────────────────────────────────────────────────
 
@@ -179,9 +206,19 @@ api.post('/chat', (req, res) => {
     });
   }
 
+  // Normalize each message's content and collect any image paths for CLIs that support them.
+  const allImagePaths = [];
+  const normalizedMessages = messages.map((m) => {
+    const { text, imagePaths } = normalizeContent(m.content);
+    if (imagePaths.length && cliTool.supportsImages) {
+      allImagePaths.push(...imagePaths);
+    }
+    return { role: m.role, text };
+  });
+
   // Build prompt — embed system prompt for tools that don't have a dedicated flag
-  let prompt = messages
-    .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+  let prompt = normalizedMessages
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`)
     .join('\n\n');
 
   if (cliTool.embedSystemPrompt && systemPrompt) {
@@ -194,6 +231,9 @@ api.post('/chat', (req, res) => {
   res.flushHeaders();
 
   const args = cliTool.buildArgs(model, systemPrompt);
+  if (cliTool.appendImageArgs && allImagePaths.length) {
+    cliTool.appendImageArgs(args, allImagePaths);
+  }
   if (cliTool.inputMode === 'arg') args.push('-p', prompt);
 
   const proc = spawn(cliTool.command, args, {

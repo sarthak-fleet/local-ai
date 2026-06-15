@@ -39,6 +39,22 @@ Stream a conversation through any supported CLI tool.
 | `messages` | `{role, content}[]` | yes | — |
 | `systemPrompt` | string | no | — |
 
+`content` accepts either a string (text-only) or an array of parts:
+
+```json
+{
+  "role": "user",
+  "content": [
+    { "type": "text", "text": "What's on this screen?" },
+    { "type": "image", "image_path": "/tmp/shot-001.png" }
+  ]
+}
+```
+
+Image parts are only forwarded to CLIs that support headless image input. Today
+that's `codex` (via `-i FILE`). `claude` and `gemini` drop image parts and use
+the text only.
+
 **Response:** Server-Sent Events stream
 
 ```
