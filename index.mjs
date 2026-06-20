@@ -1,5 +1,5 @@
-import express, { Router } from 'express';
-import cors from 'cors';
+import { createServer } from 'http';
+import { URL } from 'url';
 import { spawn } from 'child_process';
 
 // ── CLI Tool Registry ─────────────────────────────────────────────
@@ -94,9 +94,35 @@ function normalizeContent(content) {
   return { text: textParts.join('\n'), imagePaths };
 }
 
-// ── Routes ────────────────────────────────────────────────────────
+// ── Minimal router + response helpers ─────────────────────────────
+// A thin shim over Node's http so route handlers stay declarative.
+// `res` is augmented with the small subset of the Express API we used:
+//   res.status(code)         — set status, chainable
+//   res.json(obj)            — send JSON body
+//   res.setHeader / write / end / flushHeaders — native or shimmed.
 
-const api = Router();
+const routes = []; // { method, path, handler }
+
+function route(method, path, handler) {
+  routes.push({ method, path, handler });
+}
+
+const api = {
+  get: (path, handler) => route('GET', path, handler),
+  post: (path, handler) => route('POST', path, handler),
+  put: (path, handler) => route('PUT', path, handler),
+  delete: (path, handler) => route('DELETE', path, handler),
+};
+
+function findRoute(method, pathname) {
+  // Match either the bare path (/health) or the /api-prefixed path (/api/health).
+  for (const r of routes) {
+    if (r.method !== method) continue;
+    if (pathname === r.path || pathname === `/api${r.path}`) return r;
+  }
+  return null;
+}
+
 const localStore = {
   progress: new Map(),
   notes: new Map(),
@@ -110,6 +136,8 @@ function localUserId(_req) {
 function scopedKey(req, problemId) {
   return `${localUserId(req)}:${problemId}`;
 }
+
+// ── Routes ────────────────────────────────────────────────────────
 
 api.get('/health', (_req, res) => {
   res.json({ status: 'ok', providers: Object.keys(CLI_TOOLS) });
@@ -324,20 +352,117 @@ api.post('/chat', (req, res) => {
   });
 });
 
+// ── Request body parsing (replaces express.json({ limit: '1mb' })) ─
+
+const BODY_LIMIT = 1024 * 1024; // 1mb
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    const method = req.method;
+    // Only parse a body for methods that carry one; mirror express.json behavior
+    // of yielding an empty object when there's nothing to parse.
+    if (method === 'GET' || method === 'HEAD') return resolve({});
+
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > BODY_LIMIT) {
+        reject(Object.assign(new Error('request entity too large'), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw) return resolve({});
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(Object.assign(new Error('invalid JSON'), { status: 400 }));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+// ── Response augmentation (Express-compatible subset) ─────────────
+
+function augmentResponse(res) {
+  res.status = (code) => {
+    res.statusCode = code;
+    return res;
+  };
+  res.json = (obj) => {
+    const body = JSON.stringify(obj);
+    if (!res.headersSent) res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(body);
+    return res;
+  };
+  // express's res.flushHeaders → http's res.flushHeaders (already present);
+  // provide a no-op fallback just in case.
+  if (typeof res.flushHeaders !== 'function') res.flushHeaders = () => {};
+  return res;
+}
+
+// ── CORS (replaces cors() with default permissive config) ─────────
+
+function applyCors(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader(
+    'Access-Control-Allow-Methods',
+    'GET,HEAD,PUT,PATCH,POST,DELETE'
+  );
+  const reqHeaders = req.headers['access-control-request-headers'];
+  if (reqHeaders) res.setHeader('Access-Control-Allow-Headers', reqHeaders);
+}
+
 // ── Server ────────────────────────────────────────────────────────
-
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: '1mb' }));
-
-// Mount at both / and /api for flexibility
-// Direct: POST /chat     Proxied: POST /api/chat
-app.use('/', api);
-app.use('/api', api);
 
 const PORT = process.env.PORT || 3456;
 
-app.listen(PORT, () => {
+const server = createServer(async (req, res) => {
+  augmentResponse(res);
+  applyCors(req, res);
+
+  // CORS preflight — mirror cors() default (204, no body).
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.setHeader('Content-Length', '0');
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const pathname = url.pathname;
+
+  // Expose query params as a plain object (req.query parity for our use).
+  req.query = Object.fromEntries(url.searchParams.entries());
+
+  const matched = findRoute(req.method, pathname);
+  if (!matched) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  try {
+    req.body = await readJsonBody(req);
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+    return;
+  }
+
+  try {
+    matched.handler(req, res);
+  } catch (err) {
+    console.error('[handler error]', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    else if (!res.writableEnded) res.end();
+  }
+});
+
+server.listen(PORT, () => {
   console.log(`\n  local-ai running on http://localhost:${PORT}`);
   console.log(`  Providers: ${Object.keys(CLI_TOOLS).join(', ')}`);
   console.log(`  Health: http://localhost:${PORT}/health\n`);

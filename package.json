@@ -8,10 +8,6 @@
     "start": "node index.mjs",
     "dev": "node --watch index.mjs"
   },
-  "dependencies": {
-    "cors": "2.8.6",
-    "express": "5.2.1"
-  },
   "keywords": [
     "claude",
     "codex",
