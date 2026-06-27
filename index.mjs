@@ -1,6 +1,7 @@
 import { createServer } from 'http';
 import { URL } from 'url';
 import { spawn } from 'child_process';
+import { tmpdir } from 'os';
 
 // ── CLI Tool Registry ─────────────────────────────────────────────
 // Each entry describes how to talk to a specific CLI tool.
@@ -39,9 +40,26 @@ const CLI_TOOLS = {
   codex: {
     // codex exec --json outputs JSONL with item.completed events
     command: 'codex',
+    // Run as a fast, read-only chat assistant — not an agent loose in the repo:
+    //   -s read-only                  hard safety contract (no writes / shell exec)
+    //   --skip-git-repo-check + cwd   neutral dir so it doesn't pull the host repo in as context
+    //   --ephemeral                   don't persist session files to disk
+    //   model_reasoning_effort=low    snappier replies (exec is batch, so latency is the lever)
+    cwd: tmpdir(),
     buildArgs: (model) => {
-      const args = ['exec', '--json'];
-      if (model) args.push('--model', model);
+      const args = [
+        'exec',
+        '--json',
+        '--skip-git-repo-check',
+        '--ephemeral',
+        '-s',
+        'read-only',
+        '-c',
+        'model_reasoning_effort=low',
+      ];
+      // The frontend selects codex via the `tool` field; `model` (when sent) is a
+      // real codex model id. The provider key 'codex' is not a model — never forward it.
+      if (model && model !== 'codex') args.push('--model', model);
       return args;
     },
     inputMode: 'stdin',
@@ -267,6 +285,7 @@ api.post('/chat', (req, res) => {
   const proc = spawn(cliTool.command, args, {
     env: { ...process.env },
     stdio: ['pipe', 'pipe', 'pipe'],
+    ...(cliTool.cwd ? { cwd: cliTool.cwd } : {}),
   });
 
   if (cliTool.inputMode === 'stdin') {

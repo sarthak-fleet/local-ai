@@ -73,9 +73,15 @@ data: [DONE]
 
 | Provider | Streaming | System Prompt |
 |----------|-----------|---------------|
-| `claude` | JSON (`stream-json`) | `--system-prompt` flag |
-| `codex` | JSON (`exec --json`) | Embedded in prompt text |
+| `claude` | JSON (`stream-json`), incremental | `--system-prompt` flag |
+| `codex` | JSON (`exec --json`), whole message per turn | Embedded in prompt text |
 | `gemini` | Plain text | Embedded in prompt text |
+
+`codex` runs as a read-only chat assistant, not an agent: it spawns with
+`-s read-only --skip-git-repo-check --ephemeral -c model_reasoning_effort=low`
+in a neutral temp `cwd`, so it never writes/executes and doesn't pull the host
+repo in as context. It rides your `codex login` (Sign in with ChatGPT) — no API
+key. `exec --json` is batch, so the reply lands in one chunk at end of turn.
 
 ## Adding a New Provider
 
